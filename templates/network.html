@@ -33,14 +33,24 @@
             <tr>
               <th>IP</th>
               <th>Hostname</th>
+              <th>Start</th>
+              <th>End</th>
+              <th>Mac</th>
+              <th>State</th>
+              <th>Valid</th>
               <th>Action</th>
               <th></th>
             </tr>
             <tr>
             {% for row in addrs %}
-            {% set  ip, host = row %}
+            {% set  ip, host, start, end, mac, state, valid  = row %}
               <td>{{ ip }}</td>
               <td>{{ host }}</td>
+              <td>{{ start }}</td>
+              <td>{{ end }}</td>
+              <td>{{ mac }}</td>
+              <td>{{ state }}</td>
+              <td>{{ valid }}</td>
                 <td>
                 <form action="/revoke" method="POST">
                   <button type="submit" name="ip" value="{{ ip }}" class="btn revoke">Revoke</button>

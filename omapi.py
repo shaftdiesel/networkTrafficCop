@@ -1,6 +1,7 @@
 import pypureomapi
 import ipaddress
 import struct
+from datetime import datetime
 
 ##Server settings
 KEYNAME="sheatestkey"
@@ -41,6 +42,15 @@ def ls(o, ip):
             if key == 'state':
                 stateValue = struct.unpack('!I', value)
                 print "State: ", key, stateValue
+            if key == 'starts':
+                (startValue,) = struct.unpack('!I', value)
+                s = datetime.fromtimestamp(startValue)
+                print "starts: ", startValue, s
+            if key == 'ends':
+                (endValue, ) = struct.unpack('!I', value)
+                e = datetime.fromtimestamp(endValue)
+                print "ends: ", endValue, e
+
     except pypureomapi.OmapiErrorNotFound:
         print "%s is currently not assigned" % (ip,)
 

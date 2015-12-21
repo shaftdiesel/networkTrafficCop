@@ -1,11 +1,13 @@
 #!/usr/bin/python
 from flask import Flask, request, render_template
 from datetime import datetime, date, time
+import time
 import os
 import re
 import sqlite3
 import pypureomapi
-
+import ipaddress
+import struct
 
 ##Server settings
 KEYNAME="sheatestkey"
@@ -21,8 +23,6 @@ def showLeases():
     ldb = LeaseDB()
     print ldb
     addrs = ldb.readDB()
-    for tup in addrs:
-        x, y = tup
     return render_template("network.html", addrs = addrs)
 
 
@@ -59,7 +59,7 @@ class LeaseDB:
     def __init__(self): #self, leases, db)
         self.leases = []
         self.db = self.getDB()
-        self.parseFile()
+        self.getLeases()
 
     def getDB(self):
         try:
@@ -69,39 +69,30 @@ class LeaseDB:
             exit(1)
         return conn
 
-    def parseFile(self):
-        ip = start = end = mac = host = ''
-        with open('dhcpd.leases', 'rw') as f: #TODO: this will have to point to the "real file" on disk
-            read_data = f.read()
-            data = read_data.split('}') #break on } rather than newline, so we can slurp in the whole lease chunk
-            for chunk in data:
-                #Build out the lease object; one-per-chunk
-                if re.search('^\s$', chunk):
-                    break
-                mIp = re.search('lease\s(\d+.\d+.\d+.\d+)\s', chunk)
-                ip =  mIp.group(1)
-                mStart = re.search('starts\s+\d+(.*?)\s+(.*?);', chunk)
-                start = mStart.group(1) + mStart.group(2)
-                mEnd = re.search('ends\s+\d+(.*?)\s+(.*?);', chunk)
-                end = mEnd.group(1) + mEnd.group(2)
-                mMac = re.search('hardware ethernet (([0-f][0-f]:){5}[0-f][0-f]);', chunk)
-                mac = mMac.group(1)
-                mHost = re.search('client-hostname\s+\W(\S+)";', chunk)
-                if mHost: #cuz this one seems to be optional.
-                    host = mHost.group(1)
-                lease = Lease(ip, start, end, mac, host)
-                if lease.valid is True:
-                    self.writeDB(lease)
+    def getLeases(self):
+        o = pypureomapi.Omapi(dhcp_server_ip, port, KEYNAME, BASE64_ENCODED_KEY)
+        ip4net = ipaddress.ip_network(unicode("192.168.22.0/24"))
+        for addr in ip4net:
+            ip = str(addr)
+            try:
+                info = dict(o.lookup_all(ip))
+                mac = o.lookup_mac(ip) #easier to just let the api look this up than converting that bitch back
+                info["hardware-address"] = mac
+                lease = Lease(ip, info)
+                self.writeDB(lease)
+            except pypureomapi.OmapiErrorNotFound:
+                print "%s is currently not assigned" % (ip,)
         return True
+
 
     def writeDB(self, lease):
         db = self.getDB()
         c = db.cursor()
-        record = [lease.ip, lease.start, lease.end, lease.mac, lease.hostname, lease.valid]
+        record = [lease.ip, lease.hostname, lease.start, lease.end, lease.mac, lease.state, lease.valid]
         print "inserting ", record
         try:
             with db:
-                db.execute("INSERT INTO leases VALUES (?,?,?,?,?,?)", record)
+                db.execute("INSERT INTO leases VALUES (?,?,?,?,?,?,?)", record)
         except sqlite3.IntegrityError:
             print "couldn't add ", record
         db.close()
@@ -110,21 +101,42 @@ class LeaseDB:
     def readDB(self):
         db = self.getDB()
         c = db.cursor()
-        c.execute("SELECT ip,hostname FROM leases")
+        c.execute("SELECT ip, hostname, start, end, mac, state, valid FROM leases")
         data = c.fetchall()
         db.close()
         return data
 
-
-
 class Lease:
     """A lease from dhcpd, consistening of an IP, timeframe, etc."""
-    def __init__(self, ip, s, e, mac, hostname):
+    #def __init__(self, state, ip, s, e, mac, hostname):
+    def __init__(self, ip, info):
+        states = {
+            1 : "free",
+            2 : "active",
+            3 : "expired",
+            4 : "released",
+            5 : "abandoned",
+            6 : "reset",
+            7 : "backup",
+            8 : "reserved",
+            9 : "bootp",
+        }
         self.ip = ip
-        self.start = self.stringToDate(s)
-        self.end =  self.stringToDate(e)
-    	self.mac = mac
-        self.hostname = hostname
+        if "state" in info:
+            stateInt, = struct.unpack('!I', info["state"])
+        self.state = states[stateInt]
+        print self.state
+        startInt,  = struct.unpack('!I', info["starts"])
+        self.start = datetime.fromtimestamp(startInt)
+        print "START: ", self.start
+        endInt,  = struct.unpack('!I', info["ends"])
+        self.end = datetime.fromtimestamp(endInt)
+        print "END: ", self.end
+    	self.mac = info["hardware-address"]
+        if "client-hostname" in info:
+            self.hostname = info["client-hostname"]
+        else:
+            self.hostname = ""
         self.valid = self.isValid(self.start, self.end)
         #('state', '\x00\x00\x00\x01'),
         #('ip-address', '\xc0\xa8\x16#'),
@@ -134,15 +146,15 @@ class Lease:
         #('starts', 'Vu\xa1\x03'),
 
     def isValid(self, start, end):
-        now = datetime.utcnow()
+        now = datetime.fromtimestamp(time.time())
         if(now > start and now < end):
             return True
         else:
             return False
 
-    def stringToDate(self, s):
-        d = datetime.strptime(s, "%Y/%m/%d %H:%M:%S")
-        return d
+    def intToDate(self, i):
+        d = datetime.fromtimestamp(i)
+        #return d
 
     def toString(self):
         return(self.ip, self.start, self.end, self.mac, self.hostname, self.isValid)
