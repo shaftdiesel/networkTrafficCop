@@ -1,0 +1,66 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- The above 3 meta tags *must* come first in the head; any other head content must come *after* these tags -->
+    <title>sullivanfam.org network clients</title>
+    <link href="/static/network.css" rel="stylesheet">
+
+    <!-- HTML5 shim and Respond.js for IE8 support of HTML5 elements and media queries -->
+    <!-- WARNING: Respond.js doesn't work if you view the page via file:// -->
+    <!--[if lt IE 9]>
+      <script src="https://oss.maxcdn.com/html5shiv/3.7.2/html5shiv.min.js"></script>
+      <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+    <![endif]-->
+  </head>
+    <body>
+      <div id="container">
+        <div id="page-header">
+          <h1> Sullivan Network Clients </h1>
+        </div>
+        <!--form action=daily>
+          <input type=submit name=daily value="Today's Chores"></input>
+        </form>
+        <form action=user method="GET">
+          <input type=text name=user value=""></input>
+          <input type=submit value="filter by child"></input>
+        </form-->
+        <div id="chart">
+          <table>
+            <tr>
+              <th>IP</th>
+              <th>Hostname</th>
+              <th>Action</th>
+              <th></th>
+            </tr>
+            <tr>
+            {% for row in addrs %}
+            {% set  ip, host = row %}
+              <td>{{ ip }}</td>
+              <td>{{ host }}</td>
+                <td>
+                <form action="/revoke" method="POST">
+                  <button type="submit" name="ip" value="{{ ip }}" class="btn revoke">Revoke</button>
+                </form>
+                </td>
+                <td>
+                <form action="/extend" method="POST">
+                  <button type="submit" name="ip" value="{{ ip }}" class="btn extend">Extend</button>
+                </form>
+                </td>
+                <td>
+                <form action="/list" method="POST">
+                  <button type="submit" name="ip" value="{{ ip }}" class="btn list">List</button>
+                </form>
+                </td>
+            </tr>
+            {% endfor %}
+          </table>
+        </form>
+        </div>
+      </div>
+    </body>
+  </html>
