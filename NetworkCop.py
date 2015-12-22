@@ -1,5 +1,5 @@
 #!/usr/bin/python
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, flash, redirect, url_for
 from datetime import datetime, date, time
 import time
 import os
@@ -9,29 +9,33 @@ import pypureomapi
 import ipaddress
 import struct
 
-##Server settings
-KEYNAME="sheatestkey"
-BASE64_ENCODED_KEY="OIag01OLUi8OSOSwX1hWzw=="
-dhcp_server_ip="192.168.22.1"
-port = 7911 # Port of the omapi service
 
 app = Flask(__name__)
+
+app.config.update(dict(
+    DATABASE=os.path.join(app.root_path, 'leaseDB.sqlite'),
+    DEBUG=True,
+    SECRET_KEY='horsefeathers',
+    USERNAME='admin',
+    PASSWORD='default',
+))
 
 ###MAIN App ###
 @app.route("/")
 def showLeases():
     ldb = LeaseDB()
-    print ldb
     addrs = ldb.readDB()
     return render_template("network.html", addrs = addrs)
 
 
 @app.route("/revoke", methods=["POST"])
 def revoke():
-    #lease = request.args.getlist('addr')[0].upper()
-    print "revoking", lease[0]
+    ip, = request.form.getlist('ip')
+    flash("revoked ip")
     #Revoke the current lease provided on the request from the webservice
-    #Options:
+    #d = dhcpdServer()
+    #d.conn.del_host(ip)
+    return redirect(url_for('showLeases'))
 
 @app.route("/extend", methods=["POST"])
 def extend():
@@ -42,42 +46,55 @@ def extend():
 
 @app.route("/list", methods=["POST"])
 def list():
-    lease = request.form.getlist('ip')[0]
-    print "listing", lease
+    ip, = request.form.getlist('ip')
+    print "listing", ip
     o = pypureomapi.Omapi("192.168.22.1",7911, 'sheatestkey', "OIag01OLUi8OSOSwX1hWzw==")
     try:
-        mac = o.lookup_mac(lease)
-        print "IP assigned ", lease, mac
-        return render_template("list.html", lease = lease, mac = mac)
+        mac = o.lookup_mac(ip)
+        print "IP assigned ", ip, mac
+        return render_template("list.html", ip = ip, mac = mac)
     except pypureomapi.OmapiErrorNotFound:
-        print "%s is currently not assigned" % (lease,)
+        print "%s is currently not assigned" % (ip,)
 
+class dhcpdServer:
+    def __init__(self):
+        self.KEYNAME="sheatestkey"
+        self.BASE64_ENCODED_KEY="OIag01OLUi8OSOSwX1hWzw=="
+        self.dhcp_server_ip="192.168.22.1" #/meh
+        self.port = 7911
+        self.conn = getConnection()
+
+    def getConnection(self):
+        return pypureomapi.Omapi(self.dhcp_server_ip, self.port, self.KEYNAME, self.BASE64_ENCODED_KEY)
 
 
 class LeaseDB:
     """Collects the dhcp info and inserts it into an sqlite database for use by the application."""
-    def __init__(self): #self, leases, db)
-        self.leases = []
+    def __init__(self):
         self.db = self.getDB()
-        self.getLeases()
+        if not app.config['DEBUG']:
+            self.getLeases()
 
     def getDB(self):
         try:
-            conn = sqlite3.connect('leaseDB.sqlite')
+            conn = sqlite3.connect(app.config['DATABASE'])
         except IOError:
             print "Error: can\'t find db file"
             exit(1)
         return conn
 
     def getLeases(self):
-        o = pypureomapi.Omapi(dhcp_server_ip, port, KEYNAME, BASE64_ENCODED_KEY)
+        d = dhcpdServer()
+        #scan the entire /24 network
         ip4net = ipaddress.ip_network(unicode("192.168.22.0/24"))
         for addr in ip4net:
             ip = str(addr)
             try:
-                info = dict(o.lookup_all(ip))
-                mac = o.lookup_mac(ip) #easier to just let the api look this up than converting that bitch back
+                info = dict(d.conn.lookup_all(ip))
+                #easier to just let the api look this up, rather than converting that bitch back from network byte order
+                mac = d.conn.lookup_mac(ip)
                 info["hardware-address"] = mac
+
                 lease = Lease(ip, info)
                 self.writeDB(lease)
             except pypureomapi.OmapiErrorNotFound:
@@ -101,7 +118,7 @@ class LeaseDB:
     def readDB(self):
         db = self.getDB()
         c = db.cursor()
-        c.execute("SELECT ip, hostname, start, end, mac, state, valid FROM leases")
+        c.execute("SELECT ip, hostname, start, end, mac, state, valid FROM leases ")
         data = c.fetchall()
         db.close()
         return data
@@ -125,25 +142,16 @@ class Lease:
         if "state" in info:
             stateInt, = struct.unpack('!I', info["state"])
         self.state = states[stateInt]
-        print self.state
         startInt,  = struct.unpack('!I', info["starts"])
         self.start = datetime.fromtimestamp(startInt)
-        print "START: ", self.start
         endInt,  = struct.unpack('!I', info["ends"])
         self.end = datetime.fromtimestamp(endInt)
-        print "END: ", self.end
     	self.mac = info["hardware-address"]
         if "client-hostname" in info:
             self.hostname = info["client-hostname"]
         else:
             self.hostname = ""
         self.valid = self.isValid(self.start, self.end)
-        #('state', '\x00\x00\x00\x01'),
-        #('ip-address', '\xc0\xa8\x16#'),
-        #('client-hostname'),
-        #('hardware-address', '$\xe3\x14\x99\xa0N'),
-        #('ends', 'Vu\xbd#'),
-        #('starts', 'Vu\xa1\x03'),
 
     def isValid(self, start, end):
         now = datetime.fromtimestamp(time.time())
@@ -160,4 +168,4 @@ class Lease:
         return(self.ip, self.start, self.end, self.mac, self.hostname, self.isValid)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True)
+    app.run(host='0.0.0.0', debug=app.config['DEBUG'])
