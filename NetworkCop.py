@@ -57,31 +57,20 @@ def list():
         print "%s is currently not assigned" % (ip,)
 
 class dhcpdServer:
+    """Sets up a connection to the dhcpd sever using Omapi and returns a list of leases"""
     def __init__(self):
+        #Dhcp server
         self.KEYNAME="sheatestkey"
         self.BASE64_ENCODED_KEY="OIag01OLUi8OSOSwX1hWzw=="
         self.dhcp_server_ip="192.168.22.1" #/meh
         self.port = 7911
-        self.conn = getConnection()
+        self.conn = self.getConnection()
+
+        self.leases = []
+        self.getLeases()
 
     def getConnection(self):
         return pypureomapi.Omapi(self.dhcp_server_ip, self.port, self.KEYNAME, self.BASE64_ENCODED_KEY)
-
-
-class LeaseDB:
-    """Collects the dhcp info and inserts it into an sqlite database for use by the application."""
-    def __init__(self):
-        self.db = self.getDB()
-        if not app.config['DEBUG']:
-            self.getLeases()
-
-    def getDB(self):
-        try:
-            conn = sqlite3.connect(app.config['DATABASE'])
-        except IOError:
-            print "Error: can\'t find db file"
-            exit(1)
-        return conn
 
     def getLeases(self):
         d = dhcpdServer()
@@ -94,13 +83,55 @@ class LeaseDB:
                 #easier to just let the api look this up, rather than converting that bitch back from network byte order
                 mac = d.conn.lookup_mac(ip)
                 info["hardware-address"] = mac
-
                 lease = Lease(ip, info)
-                self.writeDB(lease)
+                self.leases.append(lease)
             except pypureomapi.OmapiErrorNotFound:
                 print "%s is currently not assigned" % (ip,)
         return True
 
+
+class LeaseDB:
+    """sqlite database storing lease info."""
+    def __init__(self):
+        self.db = self.getDB()
+        #if not app.config['DEBUG']:
+        #self.initDB()
+
+    def getDB(self):
+        try:
+            conn = sqlite3.connect(app.config['DATABASE'])
+        except IOError:
+            print "Error: can\'t find db file"
+            exit(1)
+        return conn
+
+    def initDB(self):
+        db = self.getDB()
+        c = db.cursor()
+        SCHEMA = "CREATE TABLE leases \
+            (ip varchar(255) PRIMARY KEY, \
+            hostname varchar(255), \
+            start varchar(255), \
+            end varchar(255), \
+            mac varchar(255), \
+            state varchar(255), \
+            valid boolean);"
+        try:
+            with db:
+                db.execute(SCHEMA)
+                return True
+        except sqlite3.IntegrityError:
+            print "Couldn't initialize DB"
+        return False
+        db.close()
+
+    def readDB(self):
+        db = self.getDB()
+        c = db.cursor()
+        c.execute("SELECT ip, hostname, start, end, mac, state, valid FROM leases ")
+        data = c.fetchall()
+        db.close()
+        return data
 
     def writeDB(self, lease):
         db = self.getDB()
@@ -115,13 +146,6 @@ class LeaseDB:
         db.close()
         return True
 
-    def readDB(self):
-        db = self.getDB()
-        c = db.cursor()
-        c.execute("SELECT ip, hostname, start, end, mac, state, valid FROM leases ")
-        data = c.fetchall()
-        db.close()
-        return data
 
 class Lease:
     """A lease from dhcpd, consistening of an IP, timeframe, etc."""
